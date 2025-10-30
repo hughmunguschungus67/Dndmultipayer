@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Multiplayer DnD</title>
+  <style>
+    :root{--accent:#7c3aed;--muted:#6b7280}
+    body{font-family:Inter,ui-sans-serif,system-ui,Segoe UI,Roboto,Helvetica,Arial; margin:0;background:#0f172a;color:#e6eef8}
+    header{background:linear-gradient(90deg,#0b1220,#081328);padding:12px 20px;display:flex;align-items:center;gap:12px}
+    .logo{font-weight:700;color:var(--accent)}
+    .container{padding:20px;display:grid;grid-template-columns:320px 1fr;gap:16px}
+    .card{background:#071029;border:1px solid rgba(255,255,255,0.03);padding:12px;border-radius:8px}
+    input,button,select{background:#071229;color:#e6eef8;border:1px solid rgba(255,255,255,0.04);padding:8px;border-radius:6px}
+    button{cursor:pointer}
+    .small{font-size:13px;color:var(--muted)}
+    #mapCanvas{width:100%;height:420px;background:#020617;border-radius:6px}
+    .messages{height:240px;overflow:auto;padding:8px;background:#050818;border-radius:6px}
+    details{padding:6px}
+    footer{padding:12px;text-align:center;color:var(--muted)}
+    @media(max-width:900px){.container{grid-template-columns:1fr}}
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <div class="logo">Multiplayer DnD</div>
+      <div class="small">Single-file frontend (paste directly to GitHub)</div>
+    </div>
+    <div id="youInfo" class="small" style="margin-left:auto"></div>
+  </header>
+
+  <div class="container">
+    <aside>
+      <div class="card">
+        <h3>Lobbies</h3>
+        <input id="displayName" placeholder="Your name"><button id="setNameBtn">Set</button><br><br>
+        <input id="lobbyCodeInput" placeholder="Lobby code"><button id="joinLobbyBtn">Join</button><br><br>
+        <button id="createLobbyBtn">Create Lobby</button><button id="leaveLobbyBtn">Leave</button><br><br>
+        <div class="small">Current lobby: <span id="currentLobby">—</span></div>
+      </div>
+
+      <div class="card" style="margin-top:12px">
+        <h4>Dice</h4>
+        <button id="rollD20">Roll d20</button>
+        <button id="roll2d6">Roll 2d6</button>
+        <div>Result: <span id="diceResult">—</span></div>
+      </div>
+
+      <div class="card" style="margin-top:12px">
+        <h4>Weapon Creator</h4>
+        <input id="wpnName" placeholder="Name"><br>
+        <input id="wpnDice" placeholder="Dice (e.g. 1d8)"><br>
+        <select id="wpnProf"><option>Simple</option><option>Martial</option></select><br>
+        <button id="saveWpn">Save</button><button id="listWpn">List</button>
+        <pre id="weaponsList" class="small"></pre>
+      </div>
+
+      <div class="card" style="margin-top:12px">
+        <details open>
+          <summary>Host Panel</summary>
+          <div id="hostPanelArea">
+            <button id="startGameBtn">Start Game</button>
+            <button id="endGameBtn">End</button>
+            <div class="small" id="playersList"></div>
+          </div>
+        </details>
+      </div>
+    </aside>
+
+    <main>
+      <div class="card">
+        <h3>Map Generator</h3>
+        <input id="mapW" type="number" value="16" style="width:80px">
+        <input id="mapH" type="number" value="12" style="width:80px">
+        <button id="genMap">Generate</button>
+        <button id="shareMap">Share to Lobby</button>
+        <canvas id="mapCanvas"></canvas>
+      </div>
+
+      <div class="card" style="margin-top:12px">
+        <h3>Chat</h3>
+        <div class="messages" id="chatMessages"></div>
+        <input id="chatInput" placeholder="Say something..."><button id="sendMsgBtn">Send</button>
+        <h4>Lobby Weapons</h4>
+        <pre id="lobbyWeapons" class="small"></pre>
+      </div>
+    </main>
+  </div>
+
+  <footer class="small">
+    Replace <code>firebaseConfig</code> below with your Firebase credentials, then enable Anonymous Auth + Realtime DB.
+  </footer>
+
+  <!-- Firebase SDKs -->
+  <script src="https://www.gstatic.com/firebasejs/9.24.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.24.0/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.24.0/firebase-database-compat.js"></script>
+
+  <script>
+  const firebaseConfig = {
+    apiKey: "REPLACE_ME",
+    authDomain: "REPLACE_ME",
+    databaseURL: "REPLACE_ME",
+    projectId: "REPLACE_ME",
+    storageBucket: "REPLACE_ME",
+    messagingSenderId: "REPLACE_ME",
+    appId: "REPLACE_ME"
+  };
+
+  firebase.initializeApp(firebaseConfig);
+  const auth=firebase.auth(),db=firebase.database();
+  let myId=null,myName='',currentLobby=null,isHost=false,listeners=[];
+  auth.signInAnonymously().then(cred=>{myId=cred.user.uid;setInfo('you:'+myId.slice(0,6))});
+
+  const el=id=>document.getElementById(id);
+  function setInfo(t){el('youInfo').innerText=t;}
+  function randCode(len=6){return Array.from({length:len},()=>\"ABCDEFGHJKMNPQRSTUVWXYZ23456789\"[Math.floor(Math.random()*32)]).join('');}
+
+  el('setNameBtn').onclick=()=>{myName=el('displayName').value||('Guest-'+myId.slice(0,4));setInfo('you:'+myName);}
+  el('createLobbyBtn').onclick=async()=>{const code=randCode();await db.ref('lobbies/'+code).set({host:myId,hostName:myName||'Host'});joinLobby(code);}
+  el('joinLobbyBtn').onclick=()=>{const code=el('lobbyCodeInput').value.trim().toUpperCase();if(code)joinLobby(code);}
+  el('leaveLobbyBtn').onclick=()=>{if(!currentLobby)return;db.ref('lobbies/'+currentLobby+'/players/'+myId).remove();detach();resetUI();}
+
+  async function joinLobby(code){
+    const ref=db.ref('lobbies/'+code);const s=await ref.get();if(!s.exists())return alert('Lobby not found');
+    currentLobby=code;isHost=(s.val().host===myId);el('currentLobby').innerText=code;
+    await db.ref('lobbies/'+code+'/players/'+myId).set({name:myName||'Guest'});
+    attach(code);
+  }
+  function resetUI(){currentLobby=null;el('currentLobby').innerText='—';isHost=false;el('playersList').innerText='';}
+  function attach(code){
+    const p=db.ref('lobbies/'+code+'/players');p.on('value',s=>{const v=s.val()||{};el('playersList').innerText=Object.values(v).map(x=>x.name).join(', ')});listeners.push(p);
+    const c=db.ref('lobbies/'+code+'/chat');c.on('child_added',s=>addMsg(s.val()));listeners.push(c);
+    const m=db.ref('lobbies/'+code+'/map');m.on('value',s=>{const v=s.val();if(v)draw(v.grid)});listeners.push(m);
+    const w=db.ref('lobbies/'+code+'/weapons');w.on('value',s=>{const v=s.val()||{};el('lobbyWeapons').innerText=Object.values(v).map(x=>x.name+': '+x.dice).join('\\n')});listeners.push(w);
+  }
+  function detach(){listeners.forEach(r=>r.off());listeners=[];}
+
+  function addMsg(m){const d=document.createElement('div');d.innerHTML='<b>'+m.from+'</b>: '+m.text;el('chatMessages').appendChild(d);el('chatMessages').scrollTop=9999;}
+  el('sendMsgBtn').onclick=()=>sendMsg();
+  el('chatInput').onkeydown=e=>{if(e.key==='Enter')sendMsg();}
+  function sendMsg(){if(!currentLobby)return alert('Join a lobby');const t=el('chatInput').value.trim();if(!t)return;db.ref('lobbies/'+currentLobby+'/chat').push({from:myName||'Guest',text:t});el('chatInput').value='';}
+
+  el('rollD20').onclick=()=>el('diceResult').innerText=Math.floor(Math.random()*20)+1;
+  el('roll2d6').onclick=()=>{const a=Math.floor(Math.random()*6)+1,b=Math.floor(Math.random()*6)+1;el('diceResult').innerText=a+b+' ('+a+','+b+')';}
+
+  el('saveWpn').onclick=()=>{if(!currentLobby)return;const n=el('wpnName').value,d=el('wpnDice').value,p=el('wpnProf').value;if(!n||!d)return;db.ref('lobbies/'+currentLobby+'/weapons').push({name:n,dice:d,prof:p});}
+  el('listWpn').onclick=async()=>{if(!currentLobby)return;const s=await db.ref('lobbies/'+currentLobby+'/weapons').get();const v=s.val()||{};el('weaponsList').innerText=Object.values(v).map(x=>x.name+'('+x.dice+')').join('\\n');}
+
+  const ctx=el('mapCanvas').getContext('2d');
+  function randMap(w,h){return Array.from({length:h},()=>Array.from({length:w},()=>Math.random()<0.7?0:(Math.random()<0.9?1:2)));}
+  function draw(g){const w=g[0].length,h=g.length,cell=Math.min(Math.floor(el('mapCanvas').clientWidth/w),Math.floor(el('mapCanvas').clientHeight/h));el('mapCanvas').width=w*cell;el('mapCanvas').height=h*cell;for(let y=0;y<h;y++)for(let x=0;x<w;x++){ctx.fillStyle=['#052136','#38505f','#a07b3a'][g[y][x]];ctx.fillRect(x*cell,y*cell,cell,cell);}}
+  el('genMap').onclick=()=>{const w=+el('mapW').value,h=+el('mapH').value;window._map=randMap(w,h);draw(window._map);}
+  el('shareMap').onclick=()=>{if(currentLobby&&window._map)db.ref('lobbies/'+currentLobby+'/map').set({grid:window._map});}
+
+  el('startGameBtn').onclick=()=>{if(!isHost)return;db.ref('lobbies/'+currentLobby+'/meta').set({state:'started'});}
+  el('endGameBtn').onclick=()=>{if(!isHost)return;db.ref('lobbies/'+currentLobby).remove();resetUI();detach();}
+  </script>
+</body>
+</html>
